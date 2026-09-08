@@ -402,7 +402,7 @@ cat /etc/hysteria/node-info.txt
 ```
 
 ### 获取支持
-- GitHub Issues: https://github.com/Xiaofei-Z/s-hy2/issues
+- GitHub Issues: https://github.com/chentiti888/s-hy2/issues
 - 查看日志: `journalctl -u hysteria-server.service -n 100`
 
 ---
