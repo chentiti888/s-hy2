@@ -896,6 +896,7 @@ EOF
 # 快速配置：设置节点连接域名
 # 优先使用已经保存的服务器域名；如果没有，则允许用户输入并验证 DNS。
 configure_quick_server_domain() {
+    QUICK_NODE_DOMAIN=""
     local configured_domain=""
     local domain=""
     local server_ip="${1:-}"
@@ -907,7 +908,7 @@ configure_quick_server_domain() {
         echo -n -e "${YELLOW}快速配置是否使用此域名作为节点连接地址? [Y/n]: ${NC}"
         read -r use_configured
         if [[ ! "$use_configured" =~ ^[Nn]$ ]]; then
-            echo "$configured_domain"
+            QUICK_NODE_DOMAIN="$configured_domain"
             return 0
         fi
     fi
@@ -968,7 +969,7 @@ configure_quick_server_domain() {
 
     echo -e "${GREEN}域名验证成功: $domain -> $server_ip${NC}"
     echo -e "${GREEN}已保存节点域名: /etc/hysteria/server-domain.conf${NC}"
-    echo "$domain"
+    QUICK_NODE_DOMAIN="$domain"
 }
 
 # 一键快速配置
@@ -1011,7 +1012,8 @@ quick_setup_hysteria() {
     # 节点连接地址：优先使用用户自己的服务器域名。
     # 注意：这里的节点域名与后面的伪装/SNI域名是两个不同概念。
     local node_domain=""
-    node_domain="$(configure_quick_server_domain "$server_ip")"
+    configure_quick_server_domain "$server_ip"
+    node_domain="$QUICK_NODE_DOMAIN"
     echo ""
     if [[ -n "$node_domain" ]]; then
         echo -e "${GREEN}节点连接地址将使用: $node_domain:443${NC}"
