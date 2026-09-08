@@ -43,8 +43,8 @@ log_error() {
 SCRIPT_NAME="s-hy2"
 INSTALL_DIR="/opt/$SCRIPT_NAME"
 BIN_DIR="/usr/local/bin"
-REPO_URL="https://github.com/Xiaofei-Z/s-hy2"
-RAW_URL="https://raw.githubusercontent.com/Xiaofei-Z/s-hy2/main"
+REPO_URL="https://github.com/chentiti888/s-hy2"
+RAW_URL="https://raw.githubusercontent.com/chentiti888/s-hy2/main"
 
 # 打印标题
 print_header() {
