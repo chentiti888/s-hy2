@@ -893,6 +893,84 @@ LimitNOFILE=1048576
 EOF
 }
 
+# 快速配置：设置节点连接域名
+# 优先使用已经保存的服务器域名；如果没有，则允许用户输入并验证 DNS。
+configure_quick_server_domain() {
+    local configured_domain=""
+    local domain=""
+    local server_ip="${1:-}"
+
+    configured_domain="$(get_server_domain | tr -d '[:space:]')"
+
+    if [[ -n "$configured_domain" ]]; then
+        echo -e "${GREEN}检测到已配置的节点域名: $configured_domain${NC}"
+        echo -n -e "${YELLOW}快速配置是否使用此域名作为节点连接地址? [Y/n]: ${NC}"
+        read -r use_configured
+        if [[ ! "$use_configured" =~ ^[Nn]$ ]]; then
+            echo "$configured_domain"
+            return 0
+        fi
+    fi
+
+    echo ""
+    echo -e "${BLUE}节点连接地址设置${NC}"
+    echo -e "${CYAN}输入你的服务器域名，例如: hy2.example.com${NC}"
+    echo -e "${CYAN}该域名必须通过 A 记录解析到本服务器公网IP。${NC}"
+    echo -e "${CYAN}直接回车则使用服务器IP作为节点地址。${NC}"
+    echo -n -e "${BLUE}请输入节点域名: ${NC}"
+    read -r domain
+    domain="$(echo "$domain" | tr -d '[:space:]' | sed 's#^https\?://##; s#/$##')"
+
+    # 留空：兼容没有域名的用户，继续使用IP
+    if [[ -z "$domain" ]]; then
+        echo -e "${YELLOW}未设置节点域名，将使用服务器IP: $server_ip${NC}"
+        return 0
+    fi
+
+    if ! validate_domain "$domain"; then
+        echo -e "${RED}域名格式无效: $domain${NC}"
+        echo -e "${YELLOW}本次快速配置将使用服务器IP: $server_ip${NC}"
+        return 0
+    fi
+
+    # DNS 验证：优先 dig，失败时用 getent。
+    local resolved_ips=""
+    if command -v dig >/dev/null 2>&1; then
+        resolved_ips="$(dig +short A "$domain" @1.1.1.1 2>/dev/null | grep -E '^[0-9]+(\\.[0-9]+){3}$' || true)"
+        if [[ -z "$resolved_ips" ]]; then
+            resolved_ips="$(dig +short A "$domain" @8.8.8.8 2>/dev/null | grep -E '^[0-9]+(\\.[0-9]+){3}$' || true)"
+        fi
+    fi
+    if [[ -z "$resolved_ips" ]] && command -v getent >/dev/null 2>&1; then
+        resolved_ips="$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)"
+    fi
+
+    if [[ -z "$resolved_ips" ]]; then
+        echo -e "${RED}域名无法解析: $domain${NC}"
+        echo -e "${YELLOW}请检查 A 记录是否已生效。${NC}"
+        echo -e "${YELLOW}本次快速配置将使用服务器IP: $server_ip${NC}"
+        return 0
+    fi
+
+    if ! printf '%s\n' "$resolved_ips" | grep -Fxq "$server_ip"; then
+        echo -e "${RED}域名解析结果与本服务器IP不匹配。${NC}"
+        echo "服务器IP: $server_ip"
+        echo "DNS解析IP: $(echo "$resolved_ips" | tr '\n' ' ')"
+        echo -e "${YELLOW}如果使用了 Cloudflare，请确保该节点域名没有开启代理(橙云)。${NC}"
+        echo -e "${YELLOW}本次快速配置将使用服务器IP: $server_ip${NC}"
+        return 0
+    fi
+
+    # 保存节点连接域名，供快速配置、节点信息和后续管理统一使用。
+    mkdir -p /etc/hysteria
+    printf '%s\n' "$domain" > /etc/hysteria/server-domain.conf
+    chmod 600 /etc/hysteria/server-domain.conf 2>/dev/null || true
+
+    echo -e "${GREEN}域名验证成功: $domain -> $server_ip${NC}"
+    echo -e "${GREEN}已保存节点域名: /etc/hysteria/server-domain.conf${NC}"
+    echo "$domain"
+}
+
 # 一键快速配置
 quick_setup_hysteria() {
     echo -e "${CYAN}=== Hysteria2 一键快速配置 ===${NC}"
@@ -929,6 +1007,17 @@ quick_setup_hysteria() {
     local network_interface=$(get_network_interface)
     echo "服务器IP: $server_ip"
     echo "网络接口: $network_interface"
+
+    # 节点连接地址：优先使用用户自己的服务器域名。
+    # 注意：这里的节点域名与后面的伪装/SNI域名是两个不同概念。
+    local node_domain=""
+    node_domain="$(configure_quick_server_domain "$server_ip")"
+    echo ""
+    if [[ -n "$node_domain" ]]; then
+        echo -e "${GREEN}节点连接地址将使用: $node_domain:443${NC}"
+    else
+        echo -e "${YELLOW}节点连接地址将使用: $server_ip:443${NC}"
+    fi
 
     # 2. 测试最优伪装域名
     echo -e "${BLUE}步骤 2/7: 测试最优伪装域名...${NC}"
@@ -1039,7 +1128,11 @@ EOF
             echo -e "${CYAN}=== 一键快速配置完成 ===${NC}"
             echo ""
             echo -e "${YELLOW}配置信息:${NC}"
-            echo "服务器地址: $server_ip:443"
+            if [[ -n "$node_domain" ]]; then
+                echo "服务器地址: $node_domain:443"
+            else
+                echo "服务器地址: $server_ip:443"
+            fi
             echo "认证密码: $auth_password"
             echo "混淆密码: $obfs_password"
             echo "伪装域名: $best_domain"
@@ -1047,7 +1140,7 @@ EOF
             echo ""
 
             # 生成节点信息
-            generate_node_info "$server_ip" "$auth_password" "$obfs_password" "$best_domain" "$start_port" "$end_port"
+            generate_node_info "$server_ip" "$auth_password" "$obfs_password" "$best_domain" "$start_port" "$end_port" "$node_domain"
 
         else
             echo -e "${RED}服务启动失败${NC}"
@@ -1069,9 +1162,11 @@ generate_node_info() {
     local sni_domain="$4"
     local start_port="$5"
     local end_port="$6"
+    local node_domain="${7:-}"
 
-    # 检查是否有配置的服务器域名
-    local configured_domain=$(get_server_domain)
+    # 节点连接地址优先使用本次快速配置确认的域名。
+    # 如果没有传入，则读取持久化的服务器域名配置。
+    local configured_domain="${node_domain:-$(get_server_domain)}"
     local server_address=""
 
     if [[ -n "$configured_domain" ]]; then
@@ -1112,10 +1207,10 @@ http:
   listen: 127.0.0.1:8080
 
 # 节点链接 (Hysteria2://)
-hysteria2://$auth_password@$server_ip:443?sni=$sni_domain&insecure=1&obfs=salamander&obfs-password=$obfs_password#Hysteria2-QuickSetup
+hysteria2://$auth_password@$server_address?sni=$sni_domain&insecure=1&obfs=salamander&obfs-password=$obfs_password#Hysteria2-QuickSetup
 
 # 订阅链接 (Base64编码)
-$(echo "hysteria2://$auth_password@$server_ip:443?sni=$sni_domain&insecure=1&obfs=salamander&obfs-password=$obfs_password#Hysteria2-QuickSetup" | base64 -w 0)
+$(echo "hysteria2://$auth_password@$server_address?sni=$sni_domain&insecure=1&obfs=salamander&obfs-password=$obfs_password#Hysteria2-QuickSetup" | base64 -w 0)
 EOF
 
     echo -e "${GREEN}节点信息已保存到: $node_file${NC}"
