@@ -23,7 +23,7 @@ sudo rm -f /usr/local/bin/s-hy2
 
 ```bash
 # 在服务器上执行
-curl -fsSL https://raw.githubusercontent.com/Xiaofei-Z/s-hy2/main/quick-install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/chentiti888/s-hy2/main/quick-install.sh | sudo bash
 sudo s-hy2
 ```
 
@@ -32,7 +32,7 @@ sudo s-hy2
 ```bash
 # 1. 克隆最新代码
 cd /opt
-sudo git clone https://github.com/Xiaofei-Z/s-hy2.git s-hy2
+sudo git clone https://github.com/chentiti888/s-hy2.git s-hy2
 cd s-hy2
 
 # 2. 添加执行权限
@@ -357,7 +357,7 @@ fastOpen:
 
 1. **安装服务**
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/Xiaofei-Z/s-hy2/main/quick-install.sh | sudo bash
+   curl -fsSL https://raw.githubusercontent.com/chentiti888/s-hy2/main/quick-install.sh | sudo bash
    sudo s-hy2
    ```
 
@@ -425,10 +425,10 @@ sudo /root/diagnose-service.sh
 
 ### 查看文档
 - 服务器端: `cat /etc/hysteria/node-info.txt`
-- GitHub: https://github.com/Xiaofei-Z/s-hy2
+- GitHub: https://github.com/chentiti888/s-hy2
 
 ### 社区支持
-- GitHub Issues: https://github.com/Xiaofei-Z/s-hy2/issues
+- GitHub Issues: https://github.com/chentiti888/s-hy2/issues
 
 ---
 
