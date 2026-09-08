@@ -1147,32 +1147,31 @@ verify_domain_resolution() {
     echo "服务器IP: $server_ip"
     echo ""
 
+    # 使用多种方法解析域名
     local resolved_ips=()
     local dns_tools=("dig" "nslookup" "host")
-    local matched_server_ip=false
-
+    
     for tool in "${dns_tools[@]}"; do
         if command -v "$tool" &> /dev/null; then
-            local result=""
+            local result
             case $tool in
                 dig)
-                    result=$(dig +short "$domain" A 2>/dev/null | head -5)
+                    result=$(dig +short "$domain" A | head -5)
                     ;;
                 nslookup)
-                    result=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / {print $2}' | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | head -5)
+                    result=$(nslookup "$domain" 2>/dev/null | grep "Address:" | tail -n +2 | awk '{print $2}' | head -5)
                     ;;
                 host)
-                    result=$(host "$domain" 2>/dev/null | awk '/has address/ {print $4}' | head -5)
+                    result=$(host "$domain" 2>/dev/null | grep "has address" | awk '{print $4}' | head -5)
                     ;;
             esac
-
+            
             if [[ -n "$result" ]]; then
                 echo "使用 $tool 解析结果:"
                 while read -r ip; do
-                    if [[ -n "$ip" && "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+                    if [[ -n "$ip" && "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
                         if [[ "$ip" == "$server_ip" ]]; then
                             echo -e "  ${GREEN}✅ $ip (匹配)${NC}"
-                            matched_server_ip=true
                         else
                             echo -e "  ${YELLOW}⚠️  $ip (不匹配)${NC}"
                         fi
@@ -1189,15 +1188,6 @@ verify_domain_resolution() {
         echo "1. 域名DNS设置未生效"
         echo "2. 网络连接问题"
         echo "3. DNS服务器问题"
-        echo ""
-        echo "建议执行: dig +short $domain A"
-    elif [[ "$matched_server_ip" == true ]]; then
-        echo ""
-        log_success "域名解析成功，且已解析到当前服务器IP"
-    else
-        echo ""
-        log_warn "域名可以正常解析，但解析结果与当前服务器IP不匹配"
-        echo "请确认域名 A 记录是否指向: $server_ip"
     fi
 
     wait_for_user
