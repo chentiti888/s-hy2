@@ -4,48 +4,47 @@
 
 # 从配置文件解析信息
 parse_config_info() {
-    local config_file="$CONFIG_PATH"
-    local node_info=()
-    
-    if [[ ! -f "$config_file" ]]; then
-        echo "配置文件不存在"
-        return 1
-    fi
-    
-    # 解析监听端口
-    local port=$(grep -E "^listen:" "$config_file" | awk '{print $2}' | sed 's/://')
-    if [[ -z "$port" ]]; then
-        port="443"
-    fi
-    
-    # 解析认证密码
-    local auth_password=$(grep -A 2 "^auth:" "$config_file" | grep "password:" | awk '{print $2}')
-    
-    # 解析混淆密码
-    local obfs_password=""
-    if grep -q "^obfs:" "$config_file"; then
-        obfs_password=$(grep -A 3 "^obfs:" "$config_file" | grep "password:" | awk '{print $2}')
-    fi
-    
-    # 解析伪装域名
-    local masquerade_url=$(grep -A 3 "masquerade:" "$config_file" | grep "url:" | awk '{print $2}')
-    local sni_domain=""
-    if [[ -n "$masquerade_url" ]]; then
-        sni_domain=$(echo "$masquerade_url" | sed 's|https\?://||' | sed 's|/.*||')
-    fi
-    
-    # 检查证书类型
-    local cert_type="ACME"
-    local insecure="false"
-    if grep -q "^tls:" "$config_file"; then
-        cert_type="自签名"
+    local config_file="/etc/hysteria/config.yaml"
+    [[ -f "$config_file" ]] || config_file="/etc/hysteria/server.yaml"
+    [[ -f "$config_file" ]] || { echo "|||||"; return; }
+
+    local port auth_password obfs_password sni_domain insecure cert_type
+    port=$(grep -E '^listen:' "$config_file" | head -1 | grep -oE '[0-9]+' | head -1)
+    auth_password=$(awk '/^auth:/{f=1;next} f && /^[^[:space:]]/{f=0} f && /password:/{print $2;exit}' "$config_file")
+    obfs_password=$(awk '/^obfs:/{f=1;next} f && /^[^[:space:]]/{f=0} f && /password:/{print $2;exit}' "$config_file")
+
+    # TLS mode: ACME certificates are valid for the ACME domain and should use
+    # that domain as the client SNI. Self-signed mode uses insecure=1.
+    if grep -qE '^acme:' "$config_file"; then
+        cert_type="ACME证书"
+        insecure="false"
+        sni_domain=$(awk '
+            /^acme:/ {in_acme=1; next}
+            in_acme && /^[^[:space:]]/ {in_acme=0}
+            in_acme && /^[[:space:]]+-[[:space:]]+/ {gsub(/^[[:space:]]+-[[:space:]]+/, ""); print; exit}
+        ' "$config_file")
+    else
+        cert_type="自签名证书"
         insecure="true"
+        if [[ -f /etc/hysteria/server.crt ]]; then
+            sni_domain=$(openssl x509 -in /etc/hysteria/server.crt -noout -subject 2>/dev/null | sed -n 's/.*CN[[:space:]]*=[[:space:]]*//p' | cut -d',' -f1)
+        fi
     fi
-    
-    echo "$port|$auth_password|$obfs_password|$sni_domain|$cert_type|$insecure"
+
+    # Prefer the configured server domain as SNI fallback, then the masquerade
+    # host only when no certificate/domain information is available.
+    if [[ -z "$sni_domain" ]]; then
+        sni_domain=$(get_server_domain 2>/dev/null)
+    fi
+    if [[ -z "$sni_domain" ]]; then
+        local masquerade_url
+        masquerade_url=$(awk '/^[[:space:]]*url:/{print $2; exit}' "$config_file")
+        sni_domain=$(echo "$masquerade_url" | sed -E 's#^[a-zA-Z]+://([^/]+).*#\1#')
+    fi
+
+    echo "${port}|${auth_password}|${obfs_password}|${sni_domain}|${cert_type}|${insecure}"
 }
 
-# 获取服务器域名配置
 get_server_domain() {
     if [[ -f "/etc/hysteria/server-domain.conf" ]]; then
         cat "/etc/hysteria/server-domain.conf"
@@ -75,13 +74,29 @@ get_current_server_ip() {
 
 # 获取服务器地址（优先使用域名）
 get_server_address() {
-    local configured_domain=$(get_server_domain)
-
+    local configured_domain
+    configured_domain=$(get_server_domain 2>/dev/null | tr -d '\r\n[:space:]')
     if [[ -n "$configured_domain" ]]; then
         echo "$configured_domain"
-    else
-        get_current_server_ip
+        return
     fi
+
+    local config_file="/etc/hysteria/config.yaml"
+    [[ -f "$config_file" ]] || config_file="/etc/hysteria/server.yaml"
+    if [[ -f "$config_file" ]] && grep -qE '^acme:' "$config_file"; then
+        local acme_domain
+        acme_domain=$(awk '
+            /^acme:/ {in_acme=1; next}
+            in_acme && /^[^[:space:]]/ {in_acme=0}
+            in_acme && /^[[:space:]]+-[[:space:]]+/ {gsub(/^[[:space:]]+-[[:space:]]+/, ""); print; exit}
+        ' "$config_file")
+        if [[ -n "$acme_domain" ]]; then
+            echo "$acme_domain"
+            return
+        fi
+    fi
+
+    get_current_server_ip
 }
 
 # 获取端口跳跃信息
