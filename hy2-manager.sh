@@ -1135,62 +1135,127 @@ verify_domain_resolution() {
     if [[ ! -f "$SERVER_DOMAIN_CONFIG" ]]; then
         log_error "未配置服务器域名"
         wait_for_user
-        return
+        return 1
     fi
 
     local domain
-    domain=$(cat "$SERVER_DOMAIN_CONFIG")
+    domain=$(tr -d '[:space:]' < "$SERVER_DOMAIN_CONFIG" 2>/dev/null)
+
+    if [[ -z "$domain" || "$domain" =~ [/:] ]]; then
+        log_error "服务器域名格式无效: $domain"
+        wait_for_user
+        return 1
+    fi
+
     local server_ip
-    server_ip=$(get_server_ip)
+    server_ip=$(get_server_ip | tr -d '[:space:]')
 
     echo "正在验证域名: $domain"
-    echo "服务器IP: $server_ip"
+    echo "服务器IP: ${server_ip:-获取失败}"
     echo ""
 
-    # 使用多种方法解析域名
+    if [[ -z "$server_ip" || ! "$server_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        log_error "无法获取服务器公网 IPv4，无法进行IP匹配"
+        wait_for_user
+        return 1
+    fi
+
+    # 收集 A 记录。
+    # 不使用“echo | while read”向外层数组写入，避免 Bash 子 Shell 导致数组为空。
     local resolved_ips=()
-    local dns_tools=("dig" "nslookup" "host")
-    
-    for tool in "${dns_tools[@]}"; do
-        if command -v "$tool" &> /dev/null; then
-            local result
-            case $tool in
-                dig)
-                    result=$(dig +short "$domain" A | head -5)
-                    ;;
-                nslookup)
-                    result=$(nslookup "$domain" 2>/dev/null | grep "Address:" | tail -n +2 | awk '{print $2}' | head -5)
-                    ;;
-                host)
-                    result=$(host "$domain" 2>/dev/null | grep "has address" | awk '{print $4}' | head -5)
-                    ;;
-            esac
-            
+    local result=""
+    local dns_server
+    local ip
+    local existing
+    local exists
+    local unique_ips=()
+
+    # 优先使用 dig 查询多个公共 DNS，避免本机 DNS 缓存造成误判。
+    if command -v dig &> /dev/null; then
+        local dns_servers=("1.1.1.1" "8.8.8.8")
+
+        for dns_server in "${dns_servers[@]}"; do
+            result=$(dig +short +time=3 +tries=1 "@$dns_server" "$domain" A 2>/dev/null \
+                | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | head -5)
+
             if [[ -n "$result" ]]; then
-                echo "使用 $tool 解析结果:"
-                echo "$result" | while read -r ip; do
-                    if [[ -n "$ip" && "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-                        if [[ "$ip" == "$server_ip" ]]; then
-                            echo -e "  ${GREEN}✅ $ip (匹配)${NC}"
-                        else
-                            echo -e "  ${YELLOW}⚠️  $ip (不匹配)${NC}"
-                        fi
-                        resolved_ips+=("$ip")
-                    fi
-                done
+                while IFS= read -r ip; do
+                    [[ -z "$ip" ]] && continue
+                    resolved_ips+=("$ip")
+                done <<< "$result"
+            fi
+        done
+    fi
+
+    # dig 不可用或没有结果时，使用系统 DNS 作为备用。
+    if [[ ${#resolved_ips[@]} -eq 0 ]] && command -v getent &> /dev/null; then
+        result=$(getent ahostsv4 "$domain" 2>/dev/null \
+            | awk '{print $1}' \
+            | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+            | sort -u | head -5)
+
+        if [[ -n "$result" ]]; then
+            while IFS= read -r ip; do
+                [[ -z "$ip" ]] && continue
+                resolved_ips+=("$ip")
+            done <<< "$result"
+        fi
+    fi
+
+    # 去重
+    for ip in "${resolved_ips[@]}"; do
+        exists=false
+        for existing in "${unique_ips[@]}"; do
+            if [[ "$existing" == "$ip" ]]; then
+                exists=true
                 break
             fi
+        done
+        [[ "$exists" == false ]] && unique_ips+=("$ip")
+    done
+    resolved_ips=("${unique_ips[@]}")
+
+    if [[ ${#resolved_ips[@]} -eq 0 ]]; then
+        log_error "无法解析域名"
+        echo ""
+        echo "可能原因:"
+        echo "1. 域名 DNS 尚未生效"
+        echo "2. DNS 记录不是 A 记录或记录填写错误"
+        echo "3. 服务器无法访问公共 DNS"
+        echo "4. DNS 使用了 CDN/代理，当前 A 记录不是服务器IP"
+        wait_for_user
+        return 1
+    fi
+
+    echo "DNS解析结果:"
+    local matched=false
+
+    for ip in "${resolved_ips[@]}"; do
+        if [[ "$ip" == "$server_ip" ]]; then
+            echo -e "  ${GREEN}✅ $ip (匹配服务器IP)${NC}"
+            matched=true
+        else
+            echo -e "  ${YELLOW}⚠️  $ip (不匹配服务器IP)${NC}"
         fi
     done
 
-    if [[ ${#resolved_ips[@]} -eq 0 ]]; then
-        log_error "无法解析域名，可能原因:"
-        echo "1. 域名DNS设置未生效"
-        echo "2. 网络连接问题"
-        echo "3. DNS服务器问题"
+    echo ""
+
+    if [[ "$matched" == true ]]; then
+        log_success "域名解析验证成功：$domain 已解析到本服务器"
+        return 0
     fi
 
+    log_error "域名已成功解析，但没有解析到本服务器"
+    echo ""
+    echo "服务器公网IP: $server_ip"
+    echo "DNS解析IP: ${resolved_ips[*]}"
+    echo ""
+    echo "如果你使用了 Cloudflare/CDN，请检查该域名是否开启代理。"
+    echo "ACME证书域名应确保验证请求能够到达本服务器。"
+
     wait_for_user
+    return 1
 }
 
 # 删除服务器域名配置
