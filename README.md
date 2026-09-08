@@ -29,7 +29,7 @@ sudo s-hy2
 
 ### 手动安装
 ```bash
-git clone https://github.com/Xiaofei-Z/s-hy2.git
+git clone https://github.com/chentiti888/s-hy2.git
 cd s-hy2
 chmod +x hy2-manager.sh scripts/*.sh
 sudo ./hy2-manager.sh
@@ -96,8 +96,8 @@ sudo ./hy2-manager.sh
 ## 获取帮助
 
 **问题反馈**
-- 🐛 [提交 Bug](https://github.com/Xiaofei-Z/s-hy2/issues/new?template=bug_report.md)
-- 💡 [功能建议](https://github.com/Xiaofei-Z/s-hy2/issues/new?template=feature_request.md)
+- 🐛 [提交 Bug](https://github.com/chentiti888/s-hy2/issues/new?template=bug_report.md)
+- 💡 [功能建议](https://github.com/chentiti888/s-hy2/issues/new?template=feature_request.md)
 
 ## 致谢
 
@@ -108,9 +108,9 @@ sudo ./hy2-manager.sh
 
 **⭐ 如果这个项目对你有帮助，请给个 Star ⭐**
 
-[![GitHub Stars](https://img.shields.io/github/stars/Xiaofei-Z/s-hy2?style=for-the-badge)](https://github.com/Xiaofei-Z/s-hy2/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/Xiaofei-Z/s-hy2?style=for-the-badge)](https://github.com/Xiaofei-Z/s-hy2/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/chentiti888/s-hy2?style=for-the-badge)](https://github.com/chentiti888/s-hy2/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/chentiti888/s-hy2?style=for-the-badge)](https://github.com/chentiti888/s-hy2/network/members)
 
-[报告问题](https://github.com/Xiaofei-Z/s-hy2/issues) • [提交建议](https://github.com/Xiaofei-Z/s-hy2/discussions) • [参与贡献](#贡献指南)
+[报告问题](https://github.com/chentiti888/s-hy2/issues) • [提交建议](https://github.com/chentiti888/s-hy2/discussions) • [参与贡献](#贡献指南)
 
 </div>
