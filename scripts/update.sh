@@ -21,7 +21,7 @@ else
 fi
 
 # 配置
-REPO_OWNER="Xiaofei-Z"
+REPO_OWNER="chentiti888"
 REPO_NAME="s-hy2"
 BRANCH="main"
 BASE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}"
