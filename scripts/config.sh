@@ -1121,84 +1121,119 @@ EOF
     echo -e "${GREEN}节点信息已保存到: $node_file${NC}"
 }
 
-# 生成手动配置节点信息（仅手动配置使用）
+# 生成手动配置节点信息（仅供“手动配置”使用）
+# 注意：一键快速配置的 quick_setup_hysteria() 和 generate_node_info() 保持原样，不修改。
 generate_manual_node_info() {
-    local server_ip
-    server_ip=$(get_server_ip)
-
-    local configured_domain
-    configured_domain=$(get_server_domain)
-
-    local server_address
-    if [[ -n "$configured_domain" ]]; then
-        server_address="$configured_domain:$(grep -E '^listen:' "$CONFIG_PATH" | sed -E 's/.*:([0-9]+)$/\\1/' | head -1)"
-        echo -e "${GREEN}手动配置节点使用服务器域名: $configured_domain${NC}"
-    else
-        local listen_port
-        listen_port=$(grep -E '^listen:' "$CONFIG_PATH" | sed -E 's/.*:([0-9]+)$/\\1/' | head -1)
-        listen_port=${listen_port:-443}
-        server_address="$server_ip:$listen_port"
-        echo -e "${YELLOW}未配置服务器域名，节点使用服务器IP: $server_address${NC}"
-    fi
-
-    local auth_password
-    auth_password=$(awk '/^auth:/{f=1;next} f && /^[[:space:]]+password:/{print $2; exit}' "$CONFIG_PATH")
-
-    local obfs_password=""
-    if grep -q '^obfs:' "$CONFIG_PATH"; then
-        obfs_password=$(awk '/^obfs:/{f=1;next} f && /^[[:space:]]+password:/{print $2; exit}' "$CONFIG_PATH")
-    fi
-
-    local sni_domain="$configured_domain"
-    if [[ -z "$sni_domain" ]]; then
-        sni_domain=$(awk '/^acme:/{f=1;next} f && /^[[:space:]]+- /{print $2; exit}' "$CONFIG_PATH")
-    fi
-    if [[ -z "$sni_domain" ]]; then
-        sni_domain=$(openssl x509 -in /etc/hysteria/server.crt -noout -subject 2>/dev/null | sed -n 's/.*CN[[:space:]]*=[[:space:]]*//p' | sed 's/,.*//')
-    fi
-
     local node_file="/etc/hysteria/node-info.txt"
-    local node_link="hysteria2://$auth_password@$server_address"
-    local query="?sni=$sni_domain&insecure=1"
+    local manual_host=""
+    local manual_port=""
+    local manual_password=""
+    local manual_obfs_password=""
+    local manual_sni=""
+    local manual_mode=""
+    local node_url=""
 
-    if [[ -n "$obfs_password" ]]; then
-        query="$query&obfs=salamander&obfs-password=$obfs_password"
+    if [[ ! -f "$CONFIG_PATH" ]]; then
+        echo -e "${RED}错误: 配置文件不存在${NC}"
+        return 1
     fi
 
-    node_link="${node_link}${query}#Hysteria2-Manual"
+    # 从最终生成的 config.yaml 读取实际监听端口，避免硬编码或错误替换。
+    manual_port=$(awk '/^listen:[[:space:]]*:/ {gsub(/[^0-9]/, "", $0); print; exit}' "$CONFIG_PATH")
+    if [[ -z "$manual_port" ]]; then
+        echo -e "${RED}错误: 无法从配置文件读取监听端口${NC}"
+        return 1
+    fi
+
+    # 读取认证密码。
+    manual_password=$(awk '
+        /^auth:/ {in_auth=1; next}
+        in_auth && /^[^[:space:]]/ {in_auth=0}
+        in_auth && /^[[:space:]]+password:/ {print $2; exit}
+    ' "$CONFIG_PATH")
+
+    # 读取 Salamander 混淆密码。
+    manual_obfs_password=$(awk '
+        /^obfs:/ {in_obfs=1; next}
+        in_obfs && /^[^[:space:]]/ {in_obfs=0}
+        in_obfs && /^[[:space:]]+password:/ {print $2; exit}
+    ' "$CONFIG_PATH")
+
+    if [[ -z "$manual_password" ]]; then
+        echo -e "${RED}错误: 无法从配置文件读取认证密码${NC}"
+        return 1
+    fi
+
+    # 判断证书模式，并读取对应 SNI。
+    if grep -q '^acme:' "$CONFIG_PATH"; then
+        manual_mode="acme"
+        manual_sni=$(awk '
+            /^acme:/ {in_acme=1; next}
+            in_acme && /^[^[:space:]]/ {in_acme=0}
+            in_acme && /^[[:space:]]+-[[:space:]]+/ {print $2; exit}
+        ' "$CONFIG_PATH")
+    else
+        manual_mode="self"
+        manual_sni=$(openssl x509 -in /etc/hysteria/server.crt -noout -subject 2>/dev/null | sed -n 's/.*CN[[:space:]]*=[[:space:]]*//p')
+        if [[ -z "$manual_sni" ]]; then
+            manual_sni=$(get_server_domain)
+        fi
+    fi
+
+    # ACME 模式优先使用 config.yaml 中实际签发证书的域名，确保客户端 SNI 与证书一致。
+    if [[ "$manual_mode" == "acme" && -n "$manual_sni" ]]; then
+        manual_host="$manual_sni"
+    else
+        manual_host=$(get_server_domain)
+        if [[ -z "$manual_host" ]]; then
+            manual_host=$(get_server_ip)
+        fi
+    fi
+
+    if [[ -z "$manual_sni" ]]; then
+        manual_sni="$manual_host"
+    fi
+
+    node_url="hysteria2://${manual_password}@${manual_host}:${manual_port}?sni=${manual_sni}"
+
+    if [[ "$manual_mode" == "self" ]]; then
+        node_url+="&insecure=1"
+    fi
+
+    if grep -q '^obfs:' "$CONFIG_PATH" && [[ -n "$manual_obfs_password" ]]; then
+        node_url+="&obfs=salamander&obfs-password=${manual_obfs_password}"
+    fi
+
+    node_url+="#Hysteria2-Manual"
 
     cat > "$node_file" << EOF
 # Hysteria2 节点信息（手动配置）
 # 生成时间: $(date)
 
-服务器地址: $server_address
-认证密码: $auth_password
-SNI域名: $sni_domain
-证书验证: 忽略
+服务器地址: ${manual_host}:${manual_port}
+认证密码: ${manual_password}
+SNI域名: ${manual_sni}
+证书验证: $( [[ "$manual_mode" == "self" ]] && echo "忽略" || echo "正常验证" )
 EOF
 
-    if [[ -n "$obfs_password" ]]; then
+    if [[ -n "$manual_obfs_password" ]]; then
         cat >> "$node_file" << EOF
-混淆密码: $obfs_password
+混淆密码: ${manual_obfs_password}
 混淆类型: Salamander
-EOF
-    else
-        cat >> "$node_file" << EOF
-混淆功能: 未启用
 EOF
     fi
 
     cat >> "$node_file" << EOF
 
 # 客户端节点链接 (Hysteria2)
-$node_link
-
-# 订阅链接 (Base64编码)
-$(printf '%s' "$node_link" | base64 -w 0)
+${node_url}
 EOF
 
     echo -e "${GREEN}手动配置节点信息已保存到: $node_file${NC}"
-    echo -e "${GREEN}客户端节点地址: $server_address${NC}"
+    echo ""
+    echo -e "${CYAN}=== 手动配置节点链接 ===${NC}"
+    echo "$node_url"
+    echo ""
 }
 
 # 主配置生成函数
@@ -1256,7 +1291,7 @@ generate_hysteria_config() {
     echo ""
     echo -e "${GREEN}配置文件已保存到: $CONFIG_PATH${NC}"
 
-    # 仅手动配置生成客户端节点信息；快速配置保持原逻辑不变
+    # 手动配置专用：根据最终 config.yaml 生成正确的域名/端口节点链接。
     generate_manual_node_info
 
     # 检查端口跳跃状态并询问
